@@ -1,0 +1,3 @@
+cd C:\Users\ladan\source\repos\CableGlandPlanner_WinForms_DE\CableGlandPlanner
+dotnet new sln -n CableGlandPlanner
+dotnet sln CableGlandPlanner.sln add CableGlandPlanner.csproj
