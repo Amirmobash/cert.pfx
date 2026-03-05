@@ -1,0 +1,89 @@
+## Build a Single-File EXE (No Installer)
+
+> Recommended: run these commands in **CMD** or **PowerShell** (Windows).
+
+### 1) Publish a single EXE (self-contained, win-x64)
+```bat
+cd C:\Users\ladan\source\repos\CableGlandPlanner_WinForms_DE\CableGlandPlanner
+
+rmdir /s /q publish_signed 2>nul
+
+dotnet publish .\CableGlandPlanner.csproj -c Release -r win-x64 --self-contained true ^
+  -p:PublishSingleFile=true ^
+  -p:DebugType=None ^
+  -p:DebugSymbols=false ^
+  -o publish_signed
+
+dir publish_signed
+
+2) Remove leftover debug symbols (optional)
+
+del /q publish_signed\*.pdb 2>nul
+
+Result you deliver to the user:
+	•	publish_signed\CableGlandPlanner.exe  ✅ (single file)
+
+⸻
+
+Code Sign the Final EXE (Official Certificate / PFX)
+
+1) Check SignTool is installed
+
+where signtool
+
+If not found, install Windows 10/11 SDK (Signing Tools).
+
+2) Sign the EXE (PFX without password)
+
+set PFX=C:\path\cert.pfx
+set EXE=C:\Users\ladan\source\repos\CableGlandPlanner_WinForms_DE\CableGlandPlanner\publish_signed\CableGlandPlanner.exe
+
+signtool sign /f "%PFX%" /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "%EXE%"
+
+If SignTool still asks for a password (rare), try:
+
+signtool sign /f "%PFX%" /p "" /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "%EXE%"
+
+3) Verify the signature
+
+signtool verify /pa /v "%EXE%"
+
+
+⸻
+
+Visual Studio 2022: Post-build Event (Publish Single EXE + Sign)
+
+Paste this into:
+Project Properties → Build Events → Post-build event command line
+
+Update the paths to signtool.exe and your cert.pfx.
+
+if /I "$(ConfigurationName)"=="Release" (
+  call dotnet publish "$(ProjectPath)" -c Release -r win-x64 --self-contained true ^
+    -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false ^
+    -o "$(ProjectDir)publish_signed"
+
+  del /q "$(ProjectDir)publish_signed\*.pdb" 2>nul
+
+  call "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe" sign ^
+    /f "C:\path\cert.pfx" /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 ^
+    "$(ProjectDir)publish_signed\$(AssemblyName).exe"
+
+  call "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe" verify /pa /v ^
+    "$(ProjectDir)publish_signed\$(AssemblyName).exe"
+)
+
+Output (signed single file):
+	•	<ProjectFolder>\publish_signed\CableGlandPlanner.exe
+
+⸻
+
+Git Bash Note (Important)
+
+In Git Bash, do NOT use /p:... (it can break MSBuild).
+Use -p: instead:
+
+dotnet publish ./CableGlandPlanner.csproj -c Release -r win-x64 --self-contained true \
+  -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false \
+  -o publish_signed
+
