@@ -1,5 +1,26 @@
 ## Build a Single-File EXE (No Installer)
 
+
+if /I "$(ConfigurationName)"=="Release" (
+  call dotnet publish "$(ProjectPath)" -c Release -r win-x64 --self-contained true ^
+    -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false ^
+    -o "$(ProjectDir)publish_signed"
+
+  del /q "$(ProjectDir)publish_signed\*.pdb" 2>nul
+
+  call "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe" sign ^
+    /f "C:\path\cert.pfx" /fd SHA256 ^
+    "$(ProjectDir)publish_signed\$(AssemblyName).exe"
+
+  call "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe" verify /pa /v ^
+    "$(ProjectDir)publish_signed\$(AssemblyName).exe"
+)
+
+
+
+
+
+
 > Recommended: run these commands in **CMD** or **PowerShell** (Windows).
 
 ### 1) Publish a single EXE (self-contained, win-x64)
