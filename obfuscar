@@ -1,0 +1,26 @@
+
+dotnet tool install -g Obfuscar.GlobalTool
+
+بعد در cmd/PowerShell:
+
+obfuscar .\obfuscar.xml
+
+اگر نصب کردی ولی obfuscar شناخته نشد، معمولاً PATH ابزارهای dotnet به PATH ویندوز اضافه نیست. راه‌حل سریع: گزینه 2 یا اجرای مستقیم با dotnet tool run (اگر local نصب باشد).
+
+(بهترین برای اینکه روی هر سیستم بیلد جواب بده)
+
+داخل پوشه پروژه:
+
+dotnet new tool-manifest
+dotnet tool install Obfuscar.GlobalTool
+
+
+dotnet tool run obfuscar .\obfuscar.xml
+
+dotnet tool restore
+
+گزینه 3) بدون نصب: فایل exe آماده Obfuscar
+
+می‌تونی Obfuscar را به صورت فایل exe در یک پوشه (مثلاً tools\obfuscar\obfuscar.exe) نگه داری و در bat همین مسیر را بدهی:
+
+
