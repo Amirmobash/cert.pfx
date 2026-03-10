@@ -1,84 +1,116 @@
-## Build a Single-File EXE (No Installer)
+# Building a Single‑File EXE (No Installer) for .NET Windows Forms
 
+This guide explains how to publish a .NET Windows Forms application as a **single, self‑contained executable** (no installer) and **digitally sign** it with a code‑signing certificate. The result is a single `.exe` file that users can run immediately—no .NET runtime installation required.
 
-if /I "$(ConfigurationName)"=="Release" (
-  call dotnet publish "$(ProjectPath)" -c Release -r win-x64 --self-contained true ^
-    -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false ^
-    -o "$(ProjectDir)publish_signed"
+---
 
-  del /q "$(ProjectDir)publish_signed\*.pdb" 2>nul
+## 📋 Prerequisites
 
-  call "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe" sign ^
-    /f "C:\path\cert.pfx" /fd SHA256 ^
-    "$(ProjectDir)publish_signed\$(AssemblyName).exe"
+- [.NET SDK](https://dotnet.microsoft.com/download) (6.0 or later recommended)
+- Windows 10/11 SDK (for `signtool.exe`) – install via Visual Studio Installer or from [Windows SDK](https://developer.microsoft.com/en-us/windows/downloads/windows-sdk/)
+- A code‑signing certificate in `.pfx` format (with or without password)
+- Windows OS (the signing tools are Windows‑only)
 
-  call "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe" verify /pa /v ^
-    "$(ProjectDir)publish_signed\$(AssemblyName).exe"
-)
+---
 
+## 🛠️ Building a Single‑File Executable (Command Line)
 
+### 1. Using Command Prompt or PowerShell
 
+Open a **Command Prompt** or **PowerShell** window in your project folder.
 
-
-
-> Recommended: run these commands in **CMD** or **PowerShell** (Windows).
-
-### 1) Publish a single EXE (self-contained, win-x64)
 ```bat
-cd C:\Users\ladan\source\repos\CableGlandPlanner_WinForms_DE\CableGlandPlanner
-
+:: Clean previous output (optional)
 rmdir /s /q publish_signed 2>nul
 
-dotnet publish .\CableGlandPlanner.csproj -c Release -r win-x64 --self-contained true ^
+:: Publish as a single, self-contained executable for win-x64
+dotnet publish YourProject.csproj -c Release -r win-x64 --self-contained true ^
   -p:PublishSingleFile=true ^
   -p:DebugType=None ^
   -p:DebugSymbols=false ^
   -o publish_signed
+```
 
-dir publish_signed
+**Explanation of parameters:**
+- `-c Release` – build in Release configuration.
+- `-r win-x64` – target 64‑bit Windows.
+- `--self-contained true` – bundle the .NET runtime with your app.
+- `-p:PublishSingleFile=true` – produce a single executable.
+- `-p:DebugType=None -p:DebugSymbols=false` – exclude debug symbols.
+- `-o publish_signed` – output directory.
 
-2) Remove leftover debug symbols (optional)
+After the command succeeds, your single `.exe` will be in `publish_signed\YourAppName.exe`. You can delete any leftover `.pdb` files:
 
+```bat
 del /q publish_signed\*.pdb 2>nul
+```
 
-Result you deliver to the user:
-	•	publish_signed\CableGlandPlanner.exe  ✅ (single file)
+### 2. Using Git Bash (Important)
 
-⸻
+In **Git Bash**, do **not** use the `/p:` syntax because the slash can interfere with MSBuild argument parsing. Use `-p:` instead (with a hyphen).
 
-Code Sign the Final EXE (Official Certificate / PFX)
+```bash
+dotnet publish ./YourProject.csproj -c Release -r win-x64 --self-contained true \
+  -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false \
+  -o publish_signed
+```
 
-1) Check SignTool is installed
+---
 
-where signtool
+## 🔏 Code Signing the Executable
 
-If not found, install Windows 10/11 SDK (Signing Tools).
+### Locate `signtool.exe`
 
-2) Sign the EXE (PFX without password)
+`signtool` is part of the Windows SDK. Typical paths:
+- `C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe`
+- `C:\Program Files (x86)\Windows Kits\10\bin\10.0.22000.0\x64\signtool.exe`
 
-set PFX=C:\path\cert.pfx
-set EXE=C:\Users\ladan\source\repos\CableGlandPlanner_WinForms_DE\CableGlandPlanner\publish_signed\CableGlandPlanner.exe
+You can also use `where signtool` in **Command Prompt** to find it.
+
+### Sign with a PFX Certificate
+
+Set the paths to your certificate and the executable, then run `signtool`:
+
+```bat
+set PFX=C:\path\to\your\certificate.pfx
+set EXE=C:\path\to\publish_signed\YourAppName.exe
 
 signtool sign /f "%PFX%" /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "%EXE%"
+```
 
-If SignTool still asks for a password (rare), try:
+- `/f` – path to the `.pfx` file.
+- `/fd SHA256` – file digest algorithm.
+- `/tr <URL>` – RFC 3161 timestamp server (adds a trusted timestamp).
+- `/td SHA256` – digest algorithm for the timestamp.
 
+If your `.pfx` has a password, add `/p YourPassword`. If the password is empty (uncommon), you can try `/p ""`:
+
+```bat
 signtool sign /f "%PFX%" /p "" /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 "%EXE%"
+```
 
-3) Verify the signature
+### Verify the Signature
 
+After signing, verify that the signature is valid:
+
+```bat
 signtool verify /pa /v "%EXE%"
+```
 
+- `/pa` – verify using the Authenticode policy.
+- `/v` – verbose output.
 
-⸻
+---
 
-Visual Studio 2022: Post-build Event (Publish Single EXE + Sign)
+## 🔁 Integrating into Visual Studio (Post‑Build Event)
 
-Paste this into:
-Project Properties → Build Events → Post-build event command line
+You can automate the entire process (publish + sign) in Visual Studio so that every **Release** build produces a signed single‑file executable.
 
-Update the paths to signtool.exe and your cert.pfx.
+1. Open your project properties.
+2. Go to **Build Events** → **Post‑build event command line**.
+3. Paste the following script (adjust paths to `signtool.exe` and your `.pfx`):
 
+```bat
 if /I "$(ConfigurationName)"=="Release" (
   call dotnet publish "$(ProjectPath)" -c Release -r win-x64 --self-contained true ^
     -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false ^
@@ -87,24 +119,44 @@ if /I "$(ConfigurationName)"=="Release" (
   del /q "$(ProjectDir)publish_signed\*.pdb" 2>nul
 
   call "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe" sign ^
-    /f "C:\path\cert.pfx" /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 ^
+    /f "C:\path\to\your\certificate.pfx" /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 ^
     "$(ProjectDir)publish_signed\$(AssemblyName).exe"
 
   call "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe" verify /pa /v ^
     "$(ProjectDir)publish_signed\$(AssemblyName).exe"
 )
+```
 
-Output (signed single file):
-	•	<ProjectFolder>\publish_signed\CableGlandPlanner.exe
+**What it does:**
+- Runs only in **Release** configuration.
+- Publishes the project as a single self‑contained EXE.
+- Deletes any leftover `.pdb` files.
+- Signs the generated EXE with your certificate.
+- Verifies the signature (optional, you can remove the `verify` line).
 
-⸻
+After a successful build, your signed executable will be in:
+```
+$(ProjectDir)publish_signed\$(AssemblyName).exe
+```
 
-Git Bash Note (Important)
+---
 
-In Git Bash, do NOT use /p:... (it can break MSBuild).
-Use -p: instead:
+## 📦 Output and Delivery
 
-dotnet publish ./CableGlandPlanner.csproj -c Release -r win-x64 --self-contained true \
-  -p:PublishSingleFile=true -p:DebugType=None -p:DebugSymbols=false \
-  -o publish_signed
+The final deliverable is a **single `.exe` file** located in the `publish_signed` folder.  
+You can distribute this file directly to users—no additional files or runtimes required.
 
+---
+
+## ⚠️ Troubleshooting & Notes
+
+- **Self‑contained vs. framework‑dependent**: Using `--self-contained true` produces a larger file but eliminates the need for the user to have .NET installed. If you prefer a smaller file, omit `--self-contained` (requires the user to have the matching .NET runtime).
+- **Trimming**: You can add `-p:PublishTrimmed=true` to reduce file size, but test thoroughly as it may remove unused code.
+- **Git Bash**: Always use `-p:` (hyphen) for MSBuild properties, not `/p:`.
+- **SignTool not found**: Install the Windows SDK or ensure Visual Studio includes the “Windows 10 SDK” component.
+- **Timestamp server**: The example uses DigiCert’s timestamp server (`http://timestamp.digicert.com`). You can also use other servers like `http://timestamp.comodoca.com` or `http://timestamp.sectigo.com`.
+- **PFX password**: If your certificate is password‑protected and you want to avoid storing the password in the script, consider using a certificate store or an environment variable.
+
+---
+
+## ✅ Summary
