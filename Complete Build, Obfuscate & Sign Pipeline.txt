@@ -1,0 +1,299 @@
+# Complete Build, Obfuscate & Sign Pipeline (with Automatic Certificate Selection)
+
+This guide provides a production‑ready automation script that:
+
+- Builds your .NET Windows Forms project
+- Obfuscates the output assembly using **Obfuscar**
+- Publishes it as a **single, framework‑dependent executable** (or self‑contained)
+- Digitally signs the final `.exe` using the **best available certificate** from the Windows certificate store (`/a` switch)
+
+The signing script automatically locates `signtool.exe` and does **not** require a password or timestamp – perfect if your code‑signing certificate is already installed on the build machine.
+
+---
+
+## 📁 Repository Structure
+
+```
+YourRepo/
+├── CableGlandPlanner.csproj
+├── obfuscar.xml                 (Obfuscar configuration)
+├── build-and-sign.bat            (master build script)
+├── sign.ps1                      (PowerShell signing script with auto cert selection)
+└── .github/workflows/build.yml   (GitHub Actions CI)
+```
+
+---
+
+## 🔧 Prerequisites
+
+1. **.NET SDK** (version matching your project, e.g., 8.0)
+2. **Obfuscar** – install as a global tool:  
+   `dotnet tool install -g Obfuscar.GlobalTool`
+3. **Windows SDK** (for `signtool.exe`) – included with Visual Studio or install from [Windows SDK](https://developer.microsoft.com/en-us/windows/downloads/windows-sdk/)
+4. Your code‑signing certificate must be installed in the **Windows certificate store** (Current User or Local Machine) so that `signtool sign /a` can find it automatically.
+
+---
+
+## 🛠️ The Master Batch Script (`build-and-sign.bat`)
+
+Save this script in your project root. **Edit the variables at the top** to match your project.
+
+```batch
+@echo off
+setlocal enabledelayedexpansion
+
+REM ========== CONFIGURATION ==========
+set "CONFIGURATION=Release"
+set "RUNTIME=win-x64"
+set "FRAMEWORK=net8.0-windows"           <-- change to your TFM (e.g., net6.0-windows)
+set "PROJECT=CableGlandPlanner.csproj"
+set "SOLUTION_DIR=%~dp0"
+set "OUT_DIR=%SOLUTION_DIR%out_publish"
+
+set "OBFUSCAR_EXE=obfuscar"               <-- or full path if not in PATH
+set "OBFUSCAR_XML=%SOLUTION_DIR%obfuscar.xml"
+
+REM The DLL after normal build (before obfuscation)
+set "PROJECT_NAME=%~n0"                    <-- extracts filename without extension; adjust if needed
+REM Better: set project name manually if above doesn't work:
+set "PROJECT_NAME=CableGlandPlanner"
+
+set "ORIGINAL_DLL=%SOLUTION_DIR%bin\%CONFIGURATION%\%FRAMEWORK%\%PROJECT_NAME%.dll"
+
+REM Where Obfuscar writes the obfuscated DLL (must match <OutputDir> in obfuscar.xml)
+set "OBF_OUT_DIR=%SOLUTION_DIR%bin\%CONFIGURATION%\%FRAMEWORK%\obfuscated"
+set "OBF_DLL=%OBF_OUT_DIR%\%PROJECT_NAME%.dll"
+
+REM Path to PowerShell signing script
+set "SIGN_SCRIPT=%SOLUTION_DIR%sign.ps1"
+
+REM Final single-file EXE after publish
+set "FINAL_EXE=%OUT_DIR%\%PROJECT_NAME%.exe"
+REM ====================================
+
+echo ===== Step 1: Clean old output =====
+if exist "%OUT_DIR%" rmdir /s /q "%OUT_DIR%"
+if exist "%OBF_OUT_DIR%" rmdir /s /q "%OBF_OUT_DIR%"
+
+echo ===== Step 2: Build the project (normal) =====
+dotnet build "%PROJECT%" -c %CONFIGURATION% --no-incremental
+if errorlevel 1 exit /b 1
+
+echo ===== Step 3: Run Obfuscar =====
+"%OBFUSCAR_EXE%" "%OBFUSCAR_XML%"
+if errorlevel 1 exit /b 1
+
+echo ===== Step 4: Replace original DLL with obfuscated version =====
+copy /y "%OBF_DLL%" "%ORIGINAL_DLL%"
+if errorlevel 1 exit /b 1
+
+echo ===== Step 5: Publish single-file EXE =====
+dotnet publish "%PROJECT%" -c %CONFIGURATION% -r %RUNTIME% ^
+  -p:PublishSingleFile=true ^
+  -p:SelfContained=false ^           <-- change to true if you want self-contained
+  -p:DebugType=None -p:DebugSymbols=false ^
+  -o "%OUT_DIR%"
+if errorlevel 1 exit /b 1
+
+echo ===== Step 6: Sign the final EXE using PowerShell script =====
+if not exist "%FINAL_EXE%" (
+  echo ERROR: Final EXE not found at "%FINAL_EXE%"
+  exit /b 1
+)
+
+powershell -NoProfile -ExecutionPolicy Bypass -File "%SIGN_SCRIPT%" -target "%FINAL_EXE%"
+if errorlevel 1 (
+  echo Signing failed.
+  exit /b 1
+)
+
+echo ===== SUCCESS =====
+echo Signed single-file EXE: %FINAL_EXE%
+endlocal
+```
+
+---
+
+## ✍️ The PowerShell Signing Script (`sign.ps1`)
+
+Save this as `sign.ps1` in the same folder. It automatically finds `signtool.exe` and signs with the best available certificate (`/a`). No timestamp is added (you can add one by modifying the script).
+
+```powershell
+param(
+  [Parameter(Mandatory=$true)]
+  [string]$target
+)
+
+# Possible locations for signtool.exe (adjust if needed)
+$possible = @(
+  "$env:ProgramFiles(x86)\Windows Kits\10\bin\x64\signtool.exe",
+  "$env:ProgramFiles(x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe",
+  "$env:ProgramFiles(x86)\Windows Kits\10\bin\10.0.19041.0\x64\signtool.exe",
+  "$env:ProgramFiles(x86)\Windows Kits\10\bin\10.0.20348.0\x64\signtool.exe"
+)
+
+$signtool = $possible | Where-Object { Test-Path $_ } | Select-Object -First 1
+if (-not $signtool) {
+    throw "signtool.exe not found. Please install Windows SDK or check the path."
+}
+
+if (-not (Test-Path $target)) {
+    throw "Target file not found: $target"
+}
+
+Write-Host "Signing $target using $signtool ..."
+
+# Sign with automatic certificate selection (/a), SHA256 digest, no timestamp
+& $signtool sign /fd SHA256 /a /v $target
+if ($LASTEXITCODE -ne 0) {
+    throw "Signing failed. ExitCode=$LASTEXITCODE"
+}
+
+# Verify the signature
+& $signtool verify /pa /v $target
+if ($LASTEXITCODE -ne 0) {
+    throw "Signature verification failed. ExitCode=$LASTEXITCODE"
+}
+
+Write-Host "Successfully signed and verified: $target"
+```
+
+**Why no timestamp?**  
+Timestamps ensure the signature remains valid even after the certificate expires. For production, you should add a timestamp server (e.g., `/tr http://timestamp.digicert.com /td SHA256`). If you want a timestamp, modify the `signtool sign` line to include those parameters.
+
+---
+
+## 🛡️ Obfuscar Configuration (`obfuscar.xml`)
+
+Place this in your project root. Adjust the `<Var name="InPath">` and `<Var name="OutPath">` to match your project's output structure.
+
+```xml
+<?xml version='1.0'?>
+<Obfuscator>
+  <Var name="InPath" value="bin\Release\net8.0-windows" />
+  <Var name="OutPath" value="bin\Release\net8.0-windows\obfuscated" />
+
+  <Module file="$(InPath)\CableGlandPlanner.dll" />
+
+  <!-- Optional: keep some names if required by reflection -->
+  <!--
+  <SkipType name="MyNamespace.PublicClass" />
+  <SkipMethod name="MyNamespace.MyClass::MyMethod" />
+  -->
+
+  <Property name="MarkedOnly" value="false" />
+  <Property name="RenameProperties" value="true" />
+  <Property name="KeepPublicApi" value="false" />
+</Obfuscator>
+```
+
+Make sure the `<Var name="OutPath">` matches the `%OBF_OUT_DIR%` in the batch script.
+
+---
+
+## 🚀 Running Locally
+
+1. **Install Obfuscar** (if not already):  
+   `dotnet tool install -g Obfuscar.GlobalTool`
+
+2. **Import your code‑signing certificate** into the Windows certificate store:
+   - Double‑click the `.pfx` file and follow the wizard, or use:
+     ```powershell
+     Import-PfxCertificate -FilePath cert.pfx -CertStoreLocation Cert:\CurrentUser\My
+     ```
+
+3. Open a **Developer Command Prompt for Visual Studio** (or any Command Prompt with `signtool` in PATH) and run:
+   ```
+   build-and-sign.bat
+   ```
+
+4. If successful, your signed single‑file EXE will be in `out_publish\CableGlandPlanner.exe`.
+
+---
+
+## 🤖 GitHub Actions Integration
+
+The above script works on a local Windows machine where your certificate is installed. For CI/CD (e.g., GitHub Actions), you need to **import the certificate** into the runner's store before signing. Here’s a sample workflow that:
+
+- Decodes a base64‑encoded PFX from a secret
+- Imports it into the CurrentUser certificate store
+- Runs the build script
+
+```yaml
+name: Build and Sign
+
+on:
+  push:
+    tags: [ 'v*' ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 8.0.x
+
+      - name: Install Obfuscar
+        run: dotnet tool install -g Obfuscar.GlobalTool
+
+      - name: Decode and install certificate
+        shell: pwsh
+        run: |
+          $pfxBase64 = "${{ secrets.PFX_BASE64 }}"
+          $pfxPath = "$env:RUNNER_TEMP\cert.pfx"
+          [IO.File]::WriteAllBytes($pfxPath, [Convert]::FromBase64String($pfxBase64))
+          Import-PfxCertificate -FilePath $pfxPath -CertStoreLocation Cert:\CurrentUser\My -Password (ConvertTo-SecureString -String "${{ secrets.PFX_PASSWORD }}" -Force -AsPlainText)
+
+      - name: Build and sign
+        run: .\build-and-sign.bat
+
+      - name: Upload signed EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: CableGlandPlanner-signed
+          path: out_publish\CableGlandPlanner.exe
+```
+
+**Secrets needed:**
+- `PFX_BASE64` – your certificate file encoded in base64.
+- `PFX_PASSWORD` – the certificate password (if any).
+
+If your certificate does **not** have a password, omit the `-Password` parameter.
+
+---
+
+## ⚠️ Important Notes
+
+- **Self‑contained vs. framework‑dependent:**  
+  The script uses `-p:SelfContained=false` (framework‑dependent). If you want a true single file that includes the .NET runtime, change it to `true`. The rest of the pipeline remains the same.
+
+- **Obfuscar output path:** Ensure the `<OutputDir>` in `obfuscar.xml` matches the `%OBF_OUT_DIR%` in the batch script. The example uses `bin\Release\net8.0-windows\obfuscated`.
+
+- **Certificate selection (`/a`):** `signtool sign /a` picks the best certificate from the store that is valid for code signing. If you have multiple certificates, it may not pick the one you want. In that case, use `/sha1` with the certificate thumbprint instead of `/a`. Modify the `sign.ps1` accordingly.
+
+- **Timestamp:** The provided script does **not** add a timestamp. This means the signature will become invalid once the certificate expires. For long‑term validity, add a timestamp server. For example:
+  ```powershell
+  & $signtool sign /fd SHA256 /a /tr http://timestamp.digicert.com /td SHA256 /v $target
+  ```
+
+---
+
+## 🐛 Troubleshooting
+
+| Problem | Solution |
+|--------|----------|
+| `signtool.exe not found` | Install Windows SDK or update the `$possible` paths in `sign.ps1`. |
+| `Signing failed. ExitCode=1` | Run `signtool sign` manually with `/debug` to see details. Often caused by no suitable certificate in the store. |
+| `No certificates were found that met all the given criteria.` | Ensure your certificate is installed in **Current User\My** or **Local Machine\My** and is valid for code signing. |
+| Obfuscar cannot find the DLL | Check paths in `obfuscar.xml` – they are relative to where Obfuscar is run (the project root). |
+| The published EXE is not obfuscated | Confirm that the obfuscated DLL was copied over the original **before** publishing. The script does this in Step 4. |
+
+---
+Amir Mobasheraghdam
