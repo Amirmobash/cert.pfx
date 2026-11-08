@@ -1,5 +1,11 @@
 # Code Signing (Official) — Single-File EXE (Windows)
 
+
+<p align="center"><img src="docs/images/windows-dotnet-exe-code-signing-pipeline.svg" alt="Windows executable code signing workflow overview; certificate files and secrets are not included in the diagram" width="960"/></p>
+
+<sub>Illustrative overview; not a verified device photograph, measured CAD export, or tested safety design.</sub>
+
+
 This section explains **only the signing process** for a **final single-file `.exe`** so Windows/SmartScreen is less likely to warn.
 
 > The signature is stored **inside the EXE**. You don’t place a separate “signature file” next to it.
